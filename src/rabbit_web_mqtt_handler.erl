@@ -1,7 +1,7 @@
 %% The contents of this file are subject to the Mozilla Public License
 %% Version 1.1 (the "License"); you may not use this file except in
 %% compliance with the License. You may obtain a copy of the License
-%% at https://www.mozilla.org/MPL/
+%% at http://www.mozilla.org/MPL/
 %%
 %% Software distributed under the License is distributed on an "AS IS"
 %% basis, WITHOUT WARRANTY OF ANY KIND, either express or implied. See
@@ -13,6 +13,7 @@
 %% The Initial Developer of the Original Code is GoPivotal, Inc.
 %% Copyright (c) 2012-2016 Pivotal Software, Inc.  All rights reserved.
 %%
+
 
 -module(rabbit_web_mqtt_handler).
 -behaviour(cowboy_websocket).
@@ -74,10 +75,11 @@ init(Req, Opts) ->
 
 websocket_init(State = #state{conn_name = ConnStr, socket = Sock, peername = PeerAddr}) ->
     rabbit_log_connection:info("accepting Web MQTT connection ~p (~s)~n", [self(), ConnStr]),
+	rabbit_log_connection:info("rabbit_web_mqtt_connection_handler websocket_init"),
     AdapterInfo = amqp_connection:socket_adapter_info(Sock, {'Web MQTT', "N/A"}),
-    RealSocket = rabbit_net:unwrap_socket(Sock),
-    ProcessorState = rabbit_mqtt_processor:initial_state(Sock,
-        rabbit_mqtt_reader:ssl_login_name(RealSocket),
+  	%  RealSocket = rabbit_net:unwrap_socket(Sock),
+    ProcessorState = rabbit_mqtt_processor_custom:initial_state(Sock,
+        rabbit_mqtt_reader: ssl_login_custom_subscriber(),
         AdapterInfo,
         fun send_reply/2,
         PeerAddr),
@@ -109,14 +111,14 @@ websocket_info({bump_credit, Msg}, State) ->
     handle_credits(control_throttle(State));
 websocket_info({#'basic.deliver'{}, #amqp_msg{}, _DeliveryCtx} = Delivery,
             State = #state{ proc_state = ProcState0 }) ->
-    case rabbit_mqtt_processor:amqp_callback(Delivery, ProcState0) of
+    case rabbit_mqtt_processor_custom:amqp_callback(Delivery, ProcState0) of
         {ok, ProcState} ->
             {ok, State #state { proc_state = ProcState }, hibernate};
         {error, _, _} ->
             {stop, State}
     end;
 websocket_info(#'basic.ack'{} = Ack, State = #state{ proc_state = ProcState0 }) ->
-    case rabbit_mqtt_processor:amqp_callback(Ack, ProcState0) of
+    case rabbit_mqtt_processor_custom:amqp_callback(Ack, ProcState0) of
         {ok, ProcState} ->
             {ok, State #state { proc_state = ProcState }, hibernate};
         {error, _, _} ->
@@ -133,7 +135,7 @@ websocket_info({'EXIT', _, _}, State) ->
 websocket_info({'$gen_cast', duplicate_id}, State = #state{ proc_state = ProcState,
                                                                  conn_name = ConnName }) ->
     rabbit_log_connection:warning("Web MQTT disconnecting duplicate client id ~p (~p)~n",
-                 [rabbit_mqtt_processor:info(client_id, ProcState), ConnName]),
+                 [rabbit_mqtt_processor_custom:info(client_id, ProcState), ConnName]),
     {stop, State};
 websocket_info({start_keepalives, Keepalive},
                State = #state{ socket = Sock, keepalive_sup = KeepaliveSup }) ->
@@ -160,8 +162,8 @@ terminate(_, _, State = #state{ proc_state = ProcState,
                                 conn_name  = ConnName }) ->
     maybe_emit_stats(State),
     rabbit_log_connection:info("closing Web MQTT connection ~p (~s)~n", [self(), ConnName]),
-    rabbit_mqtt_processor:send_will(ProcState),
-    rabbit_mqtt_processor:close_connection(ProcState),
+    rabbit_mqtt_processor_custom:send_will(ProcState),
+    rabbit_mqtt_processor_custom:close_connection(ProcState),
     ok.
 
 %% Internal.
@@ -184,7 +186,7 @@ handle_data1(Data, State = #state{ parse_state = ParseState,
             {ok, ensure_stats_timer(control_throttle(
                 State #state{ parse_state = ParseState1 })), hibernate};
         {ok, Frame, Rest} ->
-            case rabbit_mqtt_processor:process_frame(Frame, ProcState) of
+            case rabbit_mqtt_processor_custom:process_frame(Frame, ProcState) of
                 {ok, ProcState1, ConnPid} ->
                     PS = rabbit_mqtt_frame:initial_state(),
                     handle_data1(
